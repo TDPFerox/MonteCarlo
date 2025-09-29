@@ -102,7 +102,7 @@ personal_crisis_prob_per_year = 0.015  # 1.5% Chance pro Jahr
 liquidation_percentage = 0.30          # 30% des Portfolios muss liquidiert werden
 crisis_duration_months = 6             # Krise dauert 6 Monate
 
-num_sim = 100     # Anzahl Simulationen (reduziert für Test)
+num_sim = 50000     # Anzahl Simulationen (reduziert für Test)
 jahre = 26         # Anlagehorizont in Jahren
 startwert = 12000    # Startkurs in Euro
 monatliche_sparrate = 500  # Monatliche Sparrate in Euro
@@ -438,6 +438,11 @@ def heston_portfolio_extended_simulation(S0, v0, mu_base, kappa, theta, sigma_v,
     # Rebalancing-Zähler (jährlich)
     last_rebalance = np.zeros(num_sim, dtype=int)
     
+    # CASH-FLOW REBALANCING: Persistente Allokations-Gewichtungen
+    # Diese werden zwischen Iterationen gespeichert und angepasst
+    current_allocation_weights = np.array([etf1_weight, etf2_weight, etf3_weight])
+    allocation_adjustment_active = False
+    
     # Initialisierung 3-ETF Portfolio
     portfolio_werte[:, 0] = S0
     portfolio_werte_real[:, 0] = S0
@@ -515,39 +520,11 @@ def heston_portfolio_extended_simulation(S0, v0, mu_base, kappa, theta, sigma_v,
             etf3_volatility * dW3[:, t]
         )
         
-        # CASH-FLOW REBALANCING: Nutze Sparrate für passives Rebalancing
-        # Berechne aktuelle Gewichtungen vor neuer Investition
-        for sim in range(num_sim):
-            if portfolio_werte_gross[sim] > 0:
-                current_etf1_weight = etf1_wert[sim, t+1] / portfolio_werte_gross[sim]
-                current_etf2_weight = etf2_wert[sim, t+1] / portfolio_werte_gross[sim]
-                current_etf3_weight = etf3_wert[sim, t+1] / portfolio_werte_gross[sim]
-                
-                # Untergewichtete ETFs bekommen mehr von der Sparrate
-                if cash_flow_rebalancing:
-                    weight_diff1 = etf1_weight - current_etf1_weight
-                    weight_diff2 = etf2_weight - current_etf2_weight
-                    weight_diff3 = etf3_weight - current_etf3_weight
-                    
-                    # Boost-Faktoren für untergewichtete ETFs
-                    boost_factor = 0.5  # 50% der Abweichung durch Cash-Flow korrigieren
-                    adj1 = 1 + (weight_diff1 * boost_factor)
-                    adj2 = 1 + (weight_diff2 * boost_factor)
-                    adj3 = 1 + (weight_diff3 * boost_factor)
-                    
-                    # Normalisieren damit Summe = 1
-                    total_adj = adj1 * etf1_weight + adj2 * etf2_weight + adj3 * etf3_weight
-                    adj1 = adj1 * etf1_weight / total_adj
-                    adj2 = adj2 * etf2_weight / total_adj
-                    adj3 = adj3 * etf3_weight / total_adj
-                else:
-                    # Standard-Allokation
-                    adj1, adj2, adj3 = etf1_weight, etf2_weight, etf3_weight
-        
-        # Neue Investitionen mit Cash-Flow-optimierter Aufteilung
-        neue_etf1_invest = sparrate * adj1 if 'adj1' in locals() else sparrate * etf1_weight
-        neue_etf2_invest = sparrate * adj2 if 'adj2' in locals() else sparrate * etf2_weight
-        neue_etf3_invest = sparrate * adj3 if 'adj3' in locals() else sparrate * etf3_weight
+        # Neue Investitionen mit Cash-Flow-Rebalancing Gewichtungen
+        # Nutze persistente Allokation aus vorherigem Monat
+        neue_etf1_invest = sparrate * current_allocation_weights[0]
+        neue_etf2_invest = sparrate * current_allocation_weights[1]  
+        neue_etf3_invest = sparrate * current_allocation_weights[2]
         
         neue_etf1_anteile = neue_etf1_invest / etf1_kurs[:, t+1]
         neue_etf2_anteile = neue_etf2_invest / etf2_kurs[:, t+1]
@@ -563,8 +540,69 @@ def heston_portfolio_extended_simulation(S0, v0, mu_base, kappa, theta, sigma_v,
         etf3_wert[:, t+1] = etf3_anteile[:, t+1] * etf3_kurs[:, t+1]
         portfolio_werte_gross = etf1_wert[:, t+1] + etf2_wert[:, t+1] + etf3_wert[:, t+1]
         
-        # Rebalancing (jährlich)
-        rebalance_now = (t % rebalance_frequency == 0) & (t > 0)  # Jährlich
+        # CASH-FLOW REBALANCING: Berechne Anpassungen für NÄCHSTEN Monat
+        if cash_flow_rebalancing and t < steps_monatlich - 1:  # Not for last month
+            total_weight1 = 0
+            total_weight2 = 0
+            total_weight3 = 0
+            valid_sims = 0
+            
+            for sim in range(num_sim):
+                if portfolio_werte_gross[sim] > 0:
+                    current_etf1_weight = etf1_wert[sim, t+1] / portfolio_werte_gross[sim]
+                    current_etf2_weight = etf2_wert[sim, t+1] / portfolio_werte_gross[sim]
+                    current_etf3_weight = etf3_wert[sim, t+1] / portfolio_werte_gross[sim]
+                    
+                    total_weight1 += current_etf1_weight
+                    total_weight2 += current_etf2_weight
+                    total_weight3 += current_etf3_weight
+                    valid_sims += 1
+            
+            if valid_sims > 0:
+                avg_weight1 = total_weight1 / valid_sims
+                avg_weight2 = total_weight2 / valid_sims
+                avg_weight3 = total_weight3 / valid_sims
+                
+                # Calculate deviations from target
+                weight_diff1 = etf1_weight - avg_weight1
+                weight_diff2 = etf2_weight - avg_weight2
+                weight_diff3 = etf3_weight - avg_weight3
+                
+                # Calculate adjustments for NEXT month's allocation
+                boost_factor = 0.4  # 40% of deviation corrected through cash flow
+                adj1 = etf1_weight
+                adj2 = etf2_weight
+                adj3 = etf3_weight
+                
+                # Apply adjustments only if significant deviation (> 3%)
+                if abs(weight_diff1) > 0.03:
+                    adj1 = etf1_weight + weight_diff1 * boost_factor
+                if abs(weight_diff2) > 0.03:
+                    adj2 = etf2_weight + weight_diff2 * boost_factor
+                if abs(weight_diff3) > 0.03:
+                    adj3 = etf3_weight + weight_diff3 * boost_factor
+                
+                # Normalize so sum = 1
+                total_adj = adj1 + adj2 + adj3
+                if total_adj > 0:
+                    adj1 = adj1 / total_adj
+                    adj2 = adj2 / total_adj
+                    adj3 = adj3 / total_adj
+                    
+                    # SPEICHERE Anpassungen für nächsten Monat (t+1)
+                    current_allocation_weights[0] = adj1
+                    current_allocation_weights[1] = adj2
+                    current_allocation_weights[2] = adj3
+                    allocation_adjustment_active = True
+        
+        # Reset zu Standard-Allokation falls keine Anpassung aktiv
+        elif not allocation_adjustment_active:
+            current_allocation_weights[0] = etf1_weight
+            current_allocation_weights[1] = etf2_weight
+            current_allocation_weights[2] = etf3_weight
+        
+        # Rebalancing (alle 24 Monate für Tax-Effizienz)
+        rebalance_now = (t % rebalance_frequency == 0) & (t > 0)
         
         for sim in range(num_sim):
             if rebalance_now:
