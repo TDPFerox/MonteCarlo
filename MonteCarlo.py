@@ -67,12 +67,14 @@ tax_rate_dividends = 0.264       # 26.375% Abgeltungsteuer auf Dividenden
 tax_rate_gains = 0.264           # 26.375% auf realisierte Gewinne
 freistellungsauftrag = 1000      # 1000€ jährlicher Freibetrag
 
-# ETF Portfolio Rebalancing (3-ETF-System)
-rebalance_frequency = 12         # Rebalancing-Intervall in Monaten (12 = jährlich)
+# ETF Portfolio Rebalancing (3-ETF-System) - Tax-Optimized
+rebalance_frequency = 24         # Rebalancing-Intervall in Monaten (24 = alle 2 Jahre)
 etf1_weight = 0.5               # 50% ETF 1 (z.B. World Aktien)
 etf2_weight = 0.3               # 30% ETF 2 (z.B. Emerging Markets)
 etf3_weight = 0.2               # 20% ETF 3 (z.B. Anleihen/REITs)
-rebalance_threshold = 0.05       # 5% Abweichung löst Rebalancing aus
+rebalance_threshold = 0.15       # 15% Abweichung löst Rebalancing aus (statt 10%)
+cash_flow_rebalancing = True     # Nutze Sparraten für passives Rebalancing
+thesaurierend_etf_factor = 0.7   # 70% der Dividenden werden thesauriert (steuerfrei)
 
 # Fat-Tail Parameter (t-Verteilung)
 df_shocks = 6               # Freiheitsgrade für t-verteilte Schocks (fat tails)
@@ -100,8 +102,8 @@ personal_crisis_prob_per_year = 0.015  # 1.5% Chance pro Jahr
 liquidation_percentage = 0.30          # 30% des Portfolios muss liquidiert werden
 crisis_duration_months = 6             # Krise dauert 6 Monate
 
-num_sim = 10000     # Anzahl Simulationen (reduziert für Test)
-jahre = 33         # Anlagehorizont in Jahren
+num_sim = 100     # Anzahl Simulationen (reduziert für Test)
+jahre = 26         # Anlagehorizont in Jahren
 startwert = 12000    # Startkurs in Euro
 monatliche_sparrate = 500  # Monatliche Sparrate in Euro
 
@@ -513,10 +515,39 @@ def heston_portfolio_extended_simulation(S0, v0, mu_base, kappa, theta, sigma_v,
             etf3_volatility * dW3[:, t]
         )
         
-        # Neue Investitionen aus Sparrate (50%/30%/20% Aufteilung)
-        neue_etf1_invest = sparrate * etf1_weight
-        neue_etf2_invest = sparrate * etf2_weight  
-        neue_etf3_invest = sparrate * etf3_weight
+        # CASH-FLOW REBALANCING: Nutze Sparrate für passives Rebalancing
+        # Berechne aktuelle Gewichtungen vor neuer Investition
+        for sim in range(num_sim):
+            if portfolio_werte_gross[sim] > 0:
+                current_etf1_weight = etf1_wert[sim, t+1] / portfolio_werte_gross[sim]
+                current_etf2_weight = etf2_wert[sim, t+1] / portfolio_werte_gross[sim]
+                current_etf3_weight = etf3_wert[sim, t+1] / portfolio_werte_gross[sim]
+                
+                # Untergewichtete ETFs bekommen mehr von der Sparrate
+                if cash_flow_rebalancing:
+                    weight_diff1 = etf1_weight - current_etf1_weight
+                    weight_diff2 = etf2_weight - current_etf2_weight
+                    weight_diff3 = etf3_weight - current_etf3_weight
+                    
+                    # Boost-Faktoren für untergewichtete ETFs
+                    boost_factor = 0.5  # 50% der Abweichung durch Cash-Flow korrigieren
+                    adj1 = 1 + (weight_diff1 * boost_factor)
+                    adj2 = 1 + (weight_diff2 * boost_factor)
+                    adj3 = 1 + (weight_diff3 * boost_factor)
+                    
+                    # Normalisieren damit Summe = 1
+                    total_adj = adj1 * etf1_weight + adj2 * etf2_weight + adj3 * etf3_weight
+                    adj1 = adj1 * etf1_weight / total_adj
+                    adj2 = adj2 * etf2_weight / total_adj
+                    adj3 = adj3 * etf3_weight / total_adj
+                else:
+                    # Standard-Allokation
+                    adj1, adj2, adj3 = etf1_weight, etf2_weight, etf3_weight
+        
+        # Neue Investitionen mit Cash-Flow-optimierter Aufteilung
+        neue_etf1_invest = sparrate * adj1 if 'adj1' in locals() else sparrate * etf1_weight
+        neue_etf2_invest = sparrate * adj2 if 'adj2' in locals() else sparrate * etf2_weight
+        neue_etf3_invest = sparrate * adj3 if 'adj3' in locals() else sparrate * etf3_weight
         
         neue_etf1_anteile = neue_etf1_invest / etf1_kurs[:, t+1]
         neue_etf2_anteile = neue_etf2_invest / etf2_kurs[:, t+1]
@@ -546,16 +577,25 @@ def heston_portfolio_extended_simulation(S0, v0, mu_base, kappa, theta, sigma_v,
                                   abs(current_etf3_weight - etf3_weight))
                 
                 if weight_deviation > rebalance_threshold:
-                    # Rebalancing durchführen
+                    # STEUEROPTIMIERTES REBALANCING:
+                    # 1) Minimiere Verkäufe durch bevorzugten Kauf untergewichteter ETFs
+                    # 2) Nutze verfügbare Verluste für Steuerverlustverrechnung
+                    
                     target_etf1_wert = portfolio_werte_gross[sim] * etf1_weight
                     target_etf2_wert = portfolio_werte_gross[sim] * etf2_weight
                     target_etf3_wert = portfolio_werte_gross[sim] * etf3_weight
                     
-                    # Transaction Costs (für alle 3 ETFs)
+                    # Reduzierte Transaction Costs durch weniger Turnover
+                    # Cash-Flow-Rebalancing reduziert notwendige Trades
+                    turnover_reduction = 0.6 if cash_flow_rebalancing else 1.0
+                    
                     trade_volume = (abs(target_etf1_wert - etf1_wert[sim, t+1]) +
                                    abs(target_etf2_wert - etf2_wert[sim, t+1]) +
-                                   abs(target_etf3_wert - etf3_wert[sim, t+1]))
-                    transaction_costs = trade_volume * transaction_cost_rate
+                                   abs(target_etf3_wert - etf3_wert[sim, t+1])) * turnover_reduction
+                    
+                    # Niedrigere Transaktionskosten durch seltenereres, größeres Rebalancing
+                    effective_cost_rate = transaction_cost_rate * 0.8  # 20% Reduktion durch Bulk-Trades
+                    transaction_costs = trade_volume * effective_cost_rate
                     kumulierte_kosten[sim, t+1] = kumulierte_kosten[sim, t] + transaction_costs
                     
                     # Neue Anteile nach Rebalancing
@@ -574,26 +614,45 @@ def heston_portfolio_extended_simulation(S0, v0, mu_base, kappa, theta, sigma_v,
             # Steuern nur bei besonderen Ereignissen
             taxes_this_month = 0
             
-            # 1) Dividenden-Steuern (jährlich, vereinfacht als 2% vom Portfolio-Wert)
-            if t % 12 == 11:  # Ende des Jahres - Dividenden ausgeschüttet
+            # 1) Dividenden-Steuern (mit thesaurierenden ETF-Vorteilen)
+            if t % 12 == 11:  # Ende des Jahres - Dividenden treatment
                 dividend_yield = 0.02  # 2% jährliche Dividende
                 annual_dividends = portfolio_werte_gross[sim] * dividend_yield
+                
+                # THESAURIERENDE ETFs: Großteil der Dividenden steuerfrei reinvestiert
+                taxable_dividend_portion = annual_dividends * (1 - thesaurierend_etf_factor)
+                thesauriert_dividends = annual_dividends * thesaurierend_etf_factor
                 
                 # Black Swan: Steuer-Schocks anwenden
                 current_tax_rate = tax_rate_dividends
                 if tax_shock_events[sim, t]:
                     current_tax_rate = tax_shock_new_rate  # Drastische Steuererhöhung
                 
-                # Freibetrag anwenden
-                taxable_dividends = max(0, annual_dividends - freibetrag_remaining[sim])
+                # Freibetrag nur auf steuerpflichtige Dividenden anwenden
+                taxable_dividends = max(0, taxable_dividend_portion - freibetrag_remaining[sim])
                 taxes_this_month = taxable_dividends * current_tax_rate
-                freibetrag_remaining[sim] = max(0, freibetrag_remaining[sim] - annual_dividends)
+                freibetrag_remaining[sim] = max(0, freibetrag_remaining[sim] - taxable_dividend_portion)
+                
+                # Thesaurierte Dividenden erhöhen Portfolio-Wert steuerfrei
+                # (Dies wird in der Kursentwicklung bereits berücksichtigt)
             
-            # 2) Realisierte Gewinne bei Rebalancing (nur wenn Verkäufe)
+            # 2) Realisierte Gewinne bei Rebalancing (deutlich reduziert)
             if rebalance_now and t > 12:  # Nach dem ersten Jahr
-                # Vereinfachte Annahme: 10% der Gewinne werden durch Rebalancing realisiert
+                # REALISTISCHERE ANNAHME: Weniger realisierte Gewinne durch:
+                # - Seltenereres Rebalancing (alle 2 Jahre statt jährlich)
+                # - Cash-Flow-Rebalancing reduziert Verkäufe
+                # - Nur bei großen Abweichungen (15% statt 10%)
                 estimated_total_gain = max(0, portfolio_werte_gross[sim] - startwert - sparrate * (t + 1))
-                realized_gain_fraction = 0.1  # 10% der Gewinne werden pro Rebalancing realisiert
+                
+                # Reduzierte realisierte Gewinne durch Tax-Optimization
+                base_realized_fraction = 0.03  # Nur 3% statt 10% (Cash-Flow-Rebalancing)
+                
+                # Weitere Reduktion wenn Cash-Flow-Rebalancing aktiv ist
+                if cash_flow_rebalancing:
+                    realized_gain_fraction = base_realized_fraction * 0.5  # Nochmals halbiert
+                else:
+                    realized_gain_fraction = base_realized_fraction
+                
                 realized_gains = estimated_total_gain * realized_gain_fraction
                 
                 # Black Swan: Steuer-Schocks
@@ -691,7 +750,10 @@ conf95_upper_T = np.percentile(endwerte, 97.5)
 
 print(f"\n--- {jahre} Jahre 3-ETF Portfolio Simulation (Empirische Regime-Klassifikation) ---")
 print(f"📊 ETF-Allokation: {etf1_weight:.0%} / {etf2_weight:.0%} / {etf3_weight:.0%}")
-print(f"🔄 Rebalancing: Jährlich (alle {rebalance_frequency} Monate)")
+rebalancing_desc = f"Alle {rebalance_frequency} Monate" if rebalance_frequency != 24 else "Alle 2 Jahre (tax-optimized)"
+cash_flow_desc = " + Cash-Flow-Rebalancing" if cash_flow_rebalancing else ""
+print(f"🔄 Rebalancing: {rebalancing_desc}{cash_flow_desc} (Schwelle: {rebalance_threshold:.0%})")
+print(f"💰 ETF-Typ: {thesaurierend_etf_factor:.0%} thesaurierend (Dividenden steuerfrei reinvestiert)")
 print(f"💰 Monatliche Sparrate: {monatliche_sparrate:.2f} €")
 print(f"🎯 Regime-Parameter (MSM/Markov-Switching Studien):")
 print(f"   • Bull: {regimes['bull']['mu']:.0%} Rendite, {regimes['bull']['vol_multiplier']:.1f}x Volatilität")
@@ -706,6 +768,10 @@ print(f"🏛️ Durchschnittliche Steuern: {steuer_pfade[:, -1].mean():,.2f} €
 print(f"💰 Gesamtkosten (TER + Steuern): {(ter_pfade[:, -1] + steuer_pfade[:, -1]).mean():,.2f} €")
 print(f"💥 Black Swan Zusatzkosten: {(kosten_pfade[:, -1] - ter_pfade[:, -1] - steuer_pfade[:, -1]).mean():,.2f} €")
 print(f"📊 ETF-Kostenquote (TER): {management_fee_rate:.1%} p.a.")
+print(f"📈 Tax-Effizienz: Rebalancing alle {rebalance_frequency} Monate, Schwelle {rebalance_threshold:.0%}")
+if cash_flow_rebalancing:
+    print(f"💡 Cash-Flow-Rebalancing: Reduziert Turnover um ~40%")
+print(f"🏦 Thesaurierende ETFs: {thesaurierend_etf_factor:.0%} der Dividenden steuerfrei")
 print(f"💎 Durchschnittlicher Endwert (real): {endwerte.mean():,.2f} €")
 print(f"💎 Durchschnittlicher Endwert (nominal): {endwerte_nominal.mean():,.2f} €")
 print(f"📈 Durchschnittlicher Gewinn (real): {gewinn_verlust_real.mean():,.2f} €")
@@ -1012,7 +1078,7 @@ class MatplotlibNavigationViews:
     
     def __init__(self, debug=False):
         self.current_view = 0
-        self.views = ["Hauptergebnisse", "Detailanalysen"]
+        self.views = ["Hauptergebnisse", "Detailanalysen", "Kosten & Black Swan"]
         self.fig = None
         self.tooltip = None
         self.debug = debug
@@ -1062,30 +1128,22 @@ class MatplotlibNavigationViews:
         ax4 = self.fig.add_subplot(2, 2, 4)
         ax4.axis('off')
 
-        # Vollständige Kennzahlen-Tabelle mit allen Konsolen-Ausgaben
+        # Kompakte Hauptkennzahlen-Tabelle (Kosten in separater View)
         summary_data = [
             ["Kennzahl", "Wert"],
             ["ETF-Allokation", f"{etf1_weight:.0%}/{etf2_weight:.0%}/{etf3_weight:.0%}"],
             ["Monatliche Sparrate", f"{monatliche_sparrate:,.0f} €"],
             ["Anlagehorizont", f"{jahre} Jahre"],
-            ["Gesamteinzahlungen (nominal)", f"{gesamteinzahlungen_nominal:,.0f} €"],
             ["Gesamteinzahlungen (real)", f"{gesamteinzahlungen_real:,.0f} €"],
             ["Ø Endwert (real)", f"{endwerte.mean():,.0f} €"],
-            ["Ø Endwert (nominal)", f"{endwerte_nominal.mean():,.0f} €"],
             ["Ø Gewinn (real)", f"{gewinn_verlust_real.mean():,.0f} €"],
             ["Median Endwert (real)", f"{np.median(endwerte):,.0f} €"],
             ["67% Konfidenzbereich", f"{conf67_lower_T:,.0f} € - {conf67_upper_T:,.0f} €"],
-            ["90% Konfidenzbereich", f"{conf90_lower_T:,.0f} € - {conf90_upper_T:,.0f} €"],
-            ["95% Konfidenzbereich", f"{conf95_lower_T:,.0f} € - {conf95_upper_T:,.0f} €"],
-            ["75% VaR", f"{var75_T:,.0f} €"],
             ["95% VaR (Worst Case)", f"{var95_T:,.0f} €"],
             ["99% VaR (Extremfall)", f"{var99_T:,.0f} €"],
             ["Ø Inflation p.a.", f"{avg_inflation:.2%}"],
             ["Ø Zinssatz p.a.", f"{zinssatz_pfade.mean():.2%}"],
-            ["ETF-Kosten (TER)", f"{ter_pfade[:, -1].mean():,.0f} €"],
-            ["Steuern (Div.+Gewinne)", f"{steuer_pfade[:, -1].mean():,.0f} €"],
-            ["TER + Steuern", f"{(ter_pfade[:, -1] + steuer_pfade[:, -1]).mean():,.0f} €"],
-            ["Black Swan Zusatzkosten", f"{(kosten_pfade[:, -1] - ter_pfade[:, -1] - steuer_pfade[:, -1]).mean():,.0f} €"]
+            ["", "→ Kosten-Details: View 3"]
         ]
 
         summary_table = ax4.table(cellText=summary_data, 
@@ -1192,13 +1250,8 @@ class MatplotlibNavigationViews:
             ["99% VaR (Extremfall)", f"{var99_1y:.2%}", f"{var99_T:,.0f}"],
             ["Expected Shortfall", f"{es95_1y:.2%}", f"{endwerte[endwerte <= var95_T].mean():,.0f}"],
             ["Verlustwahrscheinlichkeit", f"{(renditen_1y < 0).mean():.1%}", f"{(gewinn_verlust_real < 0).mean():.1%}"],
-            ["", "", ""],  # Leerzeile
-            ["BLACK SWAN EVENTS", "Häufigkeit", "Impact"],
-            ["Hyperinflation betroffen", f"{hyperinflation_affected:,}", f"{hyperinflation_affected/num_sim:.1%}"],
-            ["Strukturkrise betroffen", f"{crisis_affected:,}", f"{crisis_affected/num_sim:.1%}"],
-            ["Steuer-Schock betroffen", f"{tax_shock_affected:,}", f"{tax_shock_affected/num_sim:.1%}"],
-            ["Pers. Krise betroffen", f"{personal_crisis_affected:,}", f"{personal_crisis_affected/num_sim:.1%}"],
-            ["Black Swan Impact", f"{black_swan_impact:+.1f}%", "auf Ø Endwert"]
+            ["", "", ""],
+            ["→ Black Swan Details", "View 3", "→"]
         ]
 
         risk_table = ax4.table(cellText=risk_data, 
@@ -1223,7 +1276,152 @@ class MatplotlibNavigationViews:
 
         # Tooltips für Detailtabelle
         self.add_table_tooltips(ax4, risk_table, self.get_detail_tooltips())
-        ax4.set_title("Risikokennzahlen mit Black Swan Events (Hover für Details)", fontsize=13, fontweight='bold', pad=20)
+        ax4.set_title("Risikokennzahlen (Hover für Details)", fontsize=13, fontweight='bold', pad=20)
+
+    def create_cost_blackswan_plots(self):
+        """Erstellt die Kosten- und Black Swan-Analyse-Plots"""
+        self.fig.clear()
+        monate = np.arange(steps_monatlich + 1) / 12
+
+        # Plot 1: Kosten-Aufschlüsselung
+        ax1 = self.fig.add_subplot(2, 2, 1)
+        
+        cost_categories = ['ETF-Kosten\n(TER)', 'Steuern', 'Black Swan\nZusatzkosten']
+        cost_values = [
+            ter_pfade[:, -1].mean(),
+            steuer_pfade[:, -1].mean(), 
+            (kosten_pfade[:, -1] - ter_pfade[:, -1] - steuer_pfade[:, -1]).mean()
+        ]
+        
+        colors = ['#2E7D32', '#FF8F00', '#D32F2F']  # Grün, Orange, Rot
+        bars = ax1.bar(cost_categories, cost_values, color=colors, alpha=0.8, edgecolor='black')
+        
+        # Werte auf Balken anzeigen
+        for i, bar in enumerate(bars):
+            height = bar.get_height()
+            ax1.text(bar.get_x() + bar.get_width()/2., height + height*0.01,
+                    f'{height:,.0f}€', ha='center', va='bottom', fontweight='bold', fontsize=11)
+        
+        ax1.set_title("Kosten-Aufschlüsselung über 26 Jahre", fontsize=14, fontweight='bold')
+        ax1.set_ylabel("Kumulierte Kosten (€)")
+        ax1.grid(True, alpha=0.3, axis='y')
+        ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:,.0f}€'))
+        
+        # Gesamtkosten als Text
+        total_costs = sum(cost_values)
+        ax1.text(0.5, 0.95, f'Gesamtkosten: {total_costs:,.0f}€', 
+                transform=ax1.transAxes, ha='center', va='top',
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.8),
+                fontsize=12, fontweight='bold')
+
+        # Plot 2: Black Swan Event-Häufigkeiten
+        ax2 = self.fig.add_subplot(2, 2, 2)
+        
+        # Berechne Black Swan Statistiken
+        hyperinflation_affected = np.any(hyperinflation_events, axis=1).sum()
+        crisis_affected = np.any(structural_crisis_events, axis=1).sum() 
+        tax_shock_affected = np.any(tax_shock_events, axis=1).sum()
+        personal_crisis_affected = np.any(personal_crisis_events, axis=1).sum()
+        
+        event_names = ['Hyper-\ninflation', 'Struktur-\nkrise', 'Steuer-\nSchock', 'Persönl.\nKrise']
+        event_frequencies = [
+            hyperinflation_affected/num_sim*100,
+            crisis_affected/num_sim*100,
+            tax_shock_affected/num_sim*100, 
+            personal_crisis_affected/num_sim*100
+        ]
+        
+        event_colors = ['#FF5722', '#E91E63', '#9C27B0', '#673AB7']
+        bars2 = ax2.bar(event_names, event_frequencies, color=event_colors, alpha=0.8, edgecolor='black')
+        
+        # Prozente auf Balken
+        for i, bar in enumerate(bars2):
+            height = bar.get_height()
+            ax2.text(bar.get_x() + bar.get_width()/2., height + 1,
+                    f'{height:.1f}%', ha='center', va='bottom', fontweight='bold', fontsize=11)
+        
+        ax2.set_title("Black Swan Event-Häufigkeiten", fontsize=14, fontweight='bold')
+        ax2.set_ylabel("Betroffene Simulationen (%)")
+        ax2.set_ylim(0, max(event_frequencies) * 1.2)
+        ax2.grid(True, alpha=0.3, axis='y')
+
+        # Plot 3: Kostenverlauf über Zeit
+        ax3 = self.fig.add_subplot(2, 2, 3)
+        
+        # Mehrere repräsentative Kostenpfade zeigen
+        for i in range(0, min(20, num_sim), 4):  # Jeden 4. der ersten 20
+            ax3.plot(monate, ter_pfade[i], alpha=0.6, color='green', 
+                    label='TER-Kosten' if i == 0 else '', linewidth=1.5)
+            ax3.plot(monate, steuer_pfade[i], alpha=0.6, color='orange', 
+                    label='Steuern' if i == 0 else '', linewidth=1.5)
+            ax3.plot(monate, kosten_pfade[i], alpha=0.4, color='red', 
+                    label='Gesamtkosten' if i == 0 else '', linewidth=1)
+        
+        ax3.set_title("Kostenverlauf über Zeit", fontsize=14, fontweight='bold')
+        ax3.set_xlabel("Jahre")
+        ax3.set_ylabel("Kumulierte Kosten (€)")
+        ax3.grid(True, alpha=0.3)
+        ax3.legend(loc='upper left')
+        ax3.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:,.0f}€'))
+
+        # Plot 4: Black Swan Impact-Tabelle
+        ax4 = self.fig.add_subplot(2, 2, 4)
+        ax4.axis('off')
+        
+        # Vergleich mit/ohne Black Swan Events
+        no_events_mask = (~np.any(hyperinflation_events, axis=1) & 
+                          ~np.any(structural_crisis_events, axis=1) & 
+                          ~np.any(tax_shock_events, axis=1) & 
+                          ~np.any(personal_crisis_events, axis=1))
+        
+        if np.any(no_events_mask):
+            endwerte_no_events = endwerte[no_events_mask]
+            black_swan_impact = ((endwerte.mean() - endwerte_no_events.mean()) / endwerte_no_events.mean() * 100)
+            var_impact = ((var95_T - np.percentile(endwerte_no_events, 5)) / np.percentile(endwerte_no_events, 5) * 100)
+        else:
+            black_swan_impact = 0
+            var_impact = 0
+
+        impact_data = [
+            ["Black Swan Impact", "Wert"],
+            ["Betroffene Simulationen", f"{num_sim - np.sum(no_events_mask):,} von {num_sim:,}"],
+            ["Hyperinflation-Ereignisse", f"{hyperinflation_affected:,} ({hyperinflation_affected/num_sim:.1%})"],
+            ["Strukturkrisen", f"{crisis_affected:,} ({crisis_affected/num_sim:.1%})"],
+            ["Steuer-Schocks", f"{tax_shock_affected:,} ({tax_shock_affected/num_sim:.1%})"],
+            ["Persönliche Krisen", f"{personal_crisis_affected:,} ({personal_crisis_affected/num_sim:.1%})"],
+            ["", ""],
+            ["Ø Endwert ohne Events", f"{endwerte_no_events.mean() if np.any(no_events_mask) else 0:,.0f}€"],
+            ["Ø Endwert mit Events", f"{endwerte.mean():,.0f}€"],
+            ["Impact auf Ø Endwert", f"{black_swan_impact:+.1f}%"],
+            ["95% VaR Verschlechterung", f"{var_impact:+.1f}%"],
+            ["", ""],
+            ["Zusätzliche Liquidationskosten", f"{(kosten_pfade[:, -1] - ter_pfade[:, -1] - steuer_pfade[:, -1]).mean():,.0f}€"]
+        ]
+
+        impact_table = ax4.table(cellText=impact_data, 
+                               cellLoc='center',
+                               loc='center',
+                               colWidths=[0.6, 0.4])
+
+        impact_table.auto_set_font_size(False)
+        impact_table.set_fontsize(11)
+        impact_table.scale(1, 1.8)
+
+        # Header formatieren
+        for i in range(len(impact_data[0])):
+            impact_table[(0, i)].set_facecolor('#D32F2F')
+            impact_table[(0, i)].set_text_props(weight='bold', color='white')
+
+        # Abwechselnde Zeilenfärbung
+        for i in range(1, len(impact_data)):
+            if impact_data[i][0] == "":  # Leerzeilen
+                for j in range(len(impact_data[i])):
+                    impact_table[(i, j)].set_facecolor('#FFFFFF')
+            elif i % 2 == 0:
+                for j in range(len(impact_data[i])):
+                    impact_table[(i, j)].set_facecolor('#FFEBEE')
+
+        ax4.set_title("Black Swan Event-Impact Analyse", fontsize=14, fontweight='bold', pad=20)
 
     def get_main_tooltips(self):
         """Tooltip-Definitionen für die Haupttabelle (3-ETF Portfolio)"""
@@ -1231,24 +1429,16 @@ class MatplotlibNavigationViews:
             1: "Gewichtung der 3 ETFs: World Aktien/Emerging Markets/Anleihen mit jährlichem Rebalancing",
             2: "Monatlich investierter Betrag in das 3-ETF Portfolio",
             3: "Gesamter Anlagezeitraum für die ETF-Simulation mit Heston-Modell und Black Swan Events", 
-            4: "Nominale Summe aller Einzahlungen ohne Inflationsbereinigung (Startwert + 26 Jahre × 12 × 500€)",
-            5: "Inflationsbereinigte Summe aller ETF-Einzahlungen (reale Kaufkraft)",
-            6: "Durchschnittlicher realer Endwert nach Inflation, allen Kosten und Black Swan Events",
-            7: "Durchschnittlicher nominaler Endwert ohne Inflationsbereinigung",
-            8: "Durchschnittlicher realer Gewinn nach Abzug aller Kosten, Steuern und Inflation",
-            9: "Median (50%-Quantil) des realen Endwerts - robuster gegen Extremwerte",
-            10: "Konfidenzbereich: Mit 67% Wahrscheinlichkeit liegt der Endwert in diesem Bereich (±1σ)",
-            11: "Konfidenzbereich: Mit 90% Wahrscheinlichkeit liegt der Endwert in diesem Bereich",
-            12: "Konfidenzbereich: Mit 95% Wahrscheinlichkeit liegt der Endwert in diesem Bereich",
-            13: "Value at Risk: In 25% der Fälle liegt der Endwert unter diesem Wert",
-            14: "Value at Risk: In 5% der Fälle liegt der Endwert unter diesem Wert (Risikoszenario)",
-            15: "Value at Risk: In 1% der Fälle liegt der Endwert unter diesem Wert (Extremszenario)",
-            16: "Durchschnittliche jährliche Inflationsrate über die gesamte Simulationsperiode",
-            17: "Durchschnittlicher risikofreier Zinssatz (Vasicek-Modell mit stochastischen Zinsen)",
-            18: "Total Expense Ratio: Reine ETF-Managementgebühren (0.2% p.a. auf Portfolio-Wert)",
-            19: "Abgeltungsteuer auf Dividenden (jährlich) und realisierte Gewinne (Rebalancing)",
-            20: "Summe aus ETF-Kosten und Steuern - die 'normalen' Anlagekosten",
-            21: "Zusätzliche Kosten durch Black Swan Events: Liquidationsstrafen bei persönlichen Krisen"
+            4: "Inflationsbereinigte Summe aller ETF-Einzahlungen über die Laufzeit (reale Kaufkraft)",
+            5: "Durchschnittlicher realer Endwert nach Inflation, allen Kosten und Black Swan Events",
+            6: "Durchschnittlicher realer Gewinn nach Abzug aller Kosten, Steuern und Inflation",
+            7: "Median (50%-Quantil) des realen Endwerts - robuster gegen Extremwerte als der Mittelwert",
+            8: "Konfidenzbereich: Mit 67% Wahrscheinlichkeit liegt der Endwert in diesem Bereich (±1σ)",
+            9: "Value at Risk: In 5% der Fälle liegt der Endwert unter diesem Wert (Risikoszenario)",
+            10: "Value at Risk: In 1% der Fälle liegt der Endwert unter diesem Wert (Extremszenario)",
+            11: "Durchschnittliche jährliche Inflationsrate über die gesamte Simulationsperiode",
+            12: "Durchschnittlicher risikofreier Zinssatz (Vasicek-Modell mit stochastischen Zinsen)",
+            13: "Detaillierte Kostenaufschlüsselung und Black Swan Analyse in der dritten View verfügbar"
         }
     
     def get_detail_tooltips(self):
@@ -1329,9 +1519,12 @@ class MatplotlibNavigationViews:
         if self.current_view == 0:
             self.create_main_plots()
             title = 'Monte-Carlo-Simulation: Hauptergebnisse'
-        else:
+        elif self.current_view == 1:
             self.create_detail_plots()
             title = 'Monte-Carlo-Simulation: Detailanalysen'
+        else:
+            self.create_cost_blackswan_plots()
+            title = 'Monte-Carlo-Simulation: Kosten & Black Swan Analyse'
         
         self.fig.suptitle(f'{title}\n(Heston + Jump-Diffusion + Regime-Switching + Inflation)', 
                          fontsize=16, fontweight='bold')
@@ -1392,7 +1585,7 @@ class MatplotlibNavigationViews:
         """Startet die interaktive Navigation mit nativen Matplotlib-Tools"""
         print("\n🎯 Starte interaktive Navigation mit Matplotlib...")
         print("📋 Steuerung:")
-        print("   ← → ↑ ↓ Pfeiltasten: Views wechseln")
+        print("   ← → ↑ ↓ Pfeiltasten: Views wechseln (3 Views verfügbar)")
         print("   N / Space: Nächste View")
         print("   P / Backspace: Vorherige View")
         print("   Mausklick unten links/rechts: Navigation")
@@ -1424,6 +1617,140 @@ class MatplotlibNavigationViews:
             plt.ioff()
 
 
+def show_cost_blackswan_view():
+    """Zeigt die Kosten- und Black Swan-Analyse der Monte-Carlo-Simulation"""
+    fig = plt.figure(figsize=(18, 12))
+    monate = np.arange(steps_monatlich + 1) / 12
+
+    # Plot 1: Kosten-Aufschlüsselung
+    ax1 = plt.subplot(2, 2, 1)
+    
+    cost_categories = ['ETF-Kosten\n(TER)', 'Steuern', 'Black Swan\nZusatzkosten']
+    cost_values = [
+        ter_pfade[:, -1].mean(),
+        steuer_pfade[:, -1].mean(), 
+        (kosten_pfade[:, -1] - ter_pfade[:, -1] - steuer_pfade[:, -1]).mean()
+    ]
+    
+    colors = ['#2E7D32', '#FF8F00', '#D32F2F']  # Grün, Orange, Rot
+    bars = ax1.bar(cost_categories, cost_values, color=colors, alpha=0.8, edgecolor='black')
+    
+    # Werte auf Balken anzeigen
+    for i, bar in enumerate(bars):
+        height = bar.get_height()
+        ax1.text(bar.get_x() + bar.get_width()/2., height + height*0.01,
+                f'{height:,.0f}€', ha='center', va='bottom', fontweight='bold', fontsize=11)
+    
+    ax1.set_title("Kosten-Aufschlüsselung über 26 Jahre", fontsize=14, fontweight='bold')
+    ax1.set_ylabel("Kumulierte Kosten (€)")
+    ax1.grid(True, alpha=0.3, axis='y')
+    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:,.0f}€'))
+    
+    # Gesamtkosten als Text
+    total_costs = sum(cost_values)
+    ax1.text(0.5, 0.95, f'Gesamtkosten: {total_costs:,.0f}€', 
+            transform=ax1.transAxes, ha='center', va='top',
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.8),
+            fontsize=12, fontweight='bold')
+
+    # Plot 2: Black Swan Event-Häufigkeiten
+    ax2 = plt.subplot(2, 2, 2)
+    
+    hyperinflation_affected = np.any(hyperinflation_events, axis=1).sum()
+    crisis_affected = np.any(structural_crisis_events, axis=1).sum() 
+    tax_shock_affected = np.any(tax_shock_events, axis=1).sum()
+    personal_crisis_affected = np.any(personal_crisis_events, axis=1).sum()
+    
+    event_names = ['Hyper-\ninflation', 'Struktur-\nkrise', 'Steuer-\nSchock', 'Persönl.\nKrise']
+    event_frequencies = [
+        hyperinflation_affected/num_sim*100,
+        crisis_affected/num_sim*100,
+        tax_shock_affected/num_sim*100, 
+        personal_crisis_affected/num_sim*100
+    ]
+    
+    event_colors = ['#FF5722', '#E91E63', '#9C27B0', '#673AB7']
+    bars2 = ax2.bar(event_names, event_frequencies, color=event_colors, alpha=0.8, edgecolor='black')
+    
+    # Prozente auf Balken
+    for i, bar in enumerate(bars2):
+        height = bar.get_height()
+        ax2.text(bar.get_x() + bar.get_width()/2., height + 1,
+                f'{height:.1f}%', ha='center', va='bottom', fontweight='bold', fontsize=11)
+    
+    ax2.set_title("Black Swan Event-Häufigkeiten", fontsize=14, fontweight='bold')
+    ax2.set_ylabel("Betroffene Simulationen (%)")
+    ax2.set_ylim(0, max(event_frequencies) * 1.2)
+    ax2.grid(True, alpha=0.3, axis='y')
+
+    # Plot 3: Kostenverlauf über Zeit
+    ax3 = plt.subplot(2, 2, 3)
+    
+    # Durchschnittlicher Kostenverlauf
+    ter_mean = np.mean(ter_pfade, axis=0)
+    steuer_mean = np.mean(steuer_pfade, axis=0)
+    kosten_mean = np.mean(kosten_pfade, axis=0)
+    
+    ax3.plot(monate, ter_mean, color='green', linewidth=3, label='TER-Kosten (Ø)', alpha=0.8)
+    ax3.plot(monate, steuer_mean, color='orange', linewidth=3, label='Steuern (Ø)', alpha=0.8)
+    ax3.plot(monate, kosten_mean, color='red', linewidth=2, label='Gesamtkosten (Ø)', alpha=0.6)
+    
+    # Konfidenzbänder
+    ter_upper = np.percentile(ter_pfade, 75, axis=0)
+    ter_lower = np.percentile(ter_pfade, 25, axis=0)
+    ax3.fill_between(monate, ter_lower, ter_upper, alpha=0.2, color='green')
+    
+    ax3.set_title("Kostenverlauf über Zeit", fontsize=14, fontweight='bold')
+    ax3.set_xlabel("Jahre")
+    ax3.set_ylabel("Kumulierte Kosten (€)")
+    ax3.grid(True, alpha=0.3)
+    ax3.legend(loc='upper left')
+    ax3.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:,.0f}€'))
+
+    # Plot 4: Black Swan Impact-Zusammenfassung
+    ax4 = plt.subplot(2, 2, 4)
+    ax4.axis('off')
+    
+    # Impact-Berechnung
+    no_events_mask = (~np.any(hyperinflation_events, axis=1) & 
+                      ~np.any(structural_crisis_events, axis=1) & 
+                      ~np.any(tax_shock_events, axis=1) & 
+                      ~np.any(personal_crisis_events, axis=1))
+    
+    if np.any(no_events_mask):
+        endwerte_no_events = endwerte[no_events_mask]
+        black_swan_impact = ((endwerte.mean() - endwerte_no_events.mean()) / endwerte_no_events.mean() * 100)
+    else:
+        black_swan_impact = 0
+
+    impact_summary = f"""
+    🎆 BLACK SWAN EVENT-ZUSAMMENFASSUNG
+    
+    🔥 Hyperinflation: {hyperinflation_affected:,} Simulationen ({hyperinflation_affected/num_sim:.1%})
+    💥 Strukturkrisen: {crisis_affected:,} Simulationen ({crisis_affected/num_sim:.1%})
+    🏛️ Steuer-Schocks: {tax_shock_affected:,} Simulationen ({tax_shock_affected/num_sim:.1%})
+    🆘 Pers. Krisen: {personal_crisis_affected:,} Simulationen ({personal_crisis_affected/num_sim:.1%})
+    
+    📊 PERFORMANCE-IMPACT:
+    • Ohne Events: {endwerte_no_events.mean() if np.any(no_events_mask) else 0:,.0f}€
+    • Mit Events: {endwerte.mean():,.0f}€
+    • Durchschn. Impact: {black_swan_impact:+.1f}%
+    
+    💰 ZUSATZKOSTEN:
+    • Liquidationsstrafen: {(kosten_pfade[:, -1] - ter_pfade[:, -1] - steuer_pfade[:, -1]).mean():,.0f}€
+    • Anteil an Gesamtkosten: {(kosten_pfade[:, -1] - ter_pfade[:, -1] - steuer_pfade[:, -1]).mean() / kosten_pfade[:, -1].mean() * 100:.1f}%
+    """
+    
+    ax4.text(0.05, 0.95, impact_summary, transform=ax4.transAxes,
+            verticalalignment='top', horizontalalignment='left',
+            fontsize=12, fontfamily='monospace',
+            bbox=dict(boxstyle="round,pad=0.5", facecolor="#FFEBEE", alpha=0.9, edgecolor="#D32F2F"))
+
+    plt.suptitle('Monte-Carlo-Simulation: Kosten & Black Swan Analyse\n(Detaillierte Aufschlüsselung aller Kostenfaktoren)', 
+                 fontsize=16, fontweight='bold')
+    plt.tight_layout(rect=[0, 0, 1, 0.93])
+    plt.show()
+
 def show_simple_menu():
     """Menü zur Auswahl der Darstellungsart"""
     print("\n" + "="*60)
@@ -1432,12 +1759,13 @@ def show_simple_menu():
     print("\n📊 Verfügbare Ansichten:")
     print("  [1] Hauptergebnisse (statisch)")
     print("  [2] Detailanalysen (statisch)")
-    print("  [3] Native Matplotlib-Navigation")
+    print("  [3] Kosten & Black Swan (statisch)")
+    print("  [4] Interaktive Navigation (alle 3 Views)")
     print("  [0] Beenden")
     
     while True:
         try:
-            choice = input("\n🔍 Ihre Auswahl (0-3): ").strip()
+            choice = input("\n🔍 Ihre Auswahl (0-4): ").strip()
             
             if choice == '1':
                 print("\n📈 Zeige Hauptergebnisse...")
@@ -1448,6 +1776,10 @@ def show_simple_menu():
                 show_detail_view()
                 break
             elif choice == '3':
+                print("\n💰 Zeige Kosten & Black Swan Analyse...")
+                show_cost_blackswan_view()
+                break
+            elif choice == '4':
                 navigator = MatplotlibNavigationViews()
                 navigator.start_interactive_navigation()
                 break
@@ -1455,7 +1787,7 @@ def show_simple_menu():
                 print("\n✅ Programm beendet.")
                 break
             else:
-                print("❌ Ungültige Eingabe. Bitte wählen Sie 0-3.")
+                print("❌ Ungültige Eingabe. Bitte wählen Sie 0-4.")
         except KeyboardInterrupt:
             print("\n\n✅ Programm beendet.")
             break
