@@ -80,29 +80,29 @@ thesaurierend_etf_factor = 0.7   # 70% der Dividenden werden thesauriert (steuer
 df_shocks = 6               # Freiheitsgrade für t-verteilte Schocks (fat tails)
 
 # === BLACK SWAN EVENT PARAMETERS ===
-# Hyperinflation Events (1970s/Weimar-Style)
-hyperinflation_prob = 1/45          # Etwa alle 45 Jahre (historisch: 1923, 1970s)
+# Hyperinflation Events (1970s/Weimar-Style) - REALISTISCH für entwickelte Märkte
+hyperinflation_prob = 1/150         # Etwa alle 150 Jahre (OECD nach 1945: quasi inexistent, 1-3% über 30J)
 hyperinflation_rate = 0.12          # 12% Inflation während Hyperinflation-Jahren
 hyperinflation_duration_years = 3   # Typische Dauer: 2-4 Jahre
 hyperinflation_vol = 0.03           # Zusätzliche Inflation-Volatilität
 
-# Strukturbruch/Systemkrise Events
-structural_crisis_prob = 1/35       # Etwa alle 35 Jahre (1929, 1973, 2008 Style)
+# Strukturbruch/Systemkrise Events - REALISTISCH: alle 10-15 Jahre eine große Krise
+structural_crisis_prob = 1/12       # Etwa alle 12 Jahre (80-90% Chance über 30 Jahre, 2-4 Krisen)
 structural_crisis_drawdown = 0.50   # 50% Markt-Drawdown über 2-3 Jahre
 structural_crisis_duration_months = 24  # 2 Jahre anhaltende Krise
 structural_crisis_recovery_years = 5    # Langsame Erholung über 5 Jahre
 
-# Politische/Steuerliche Schocks
-tax_shock_prob = 1/25              # Alle 25 Jahre große Steuerreformen
+# Politische/Steuerliche Schocks - REALISTISCH: 40-60% über 30 Jahre
+tax_shock_prob = 1/30              # Alle 30 Jahre große Steuerreformen (50% über 30 Jahre)
 tax_shock_new_rate = 0.45          # Kapitalertragssteuer steigt auf 45%
 tax_shock_wealth_tax = 0.01        # 1% Vermögenssteuer ab 500k€
 
-# Persönliche Liquidationskrisen
-personal_crisis_prob_per_year = 0.015  # 1.5% Chance pro Jahr
+# Persönliche Liquidationskrisen - REALISTISCH: 25-40% über 30 Jahre
+personal_crisis_prob_per_year = 0.015  # 1.5% Chance pro Jahr (→ ~35% über 30J, statistisch korrekt)
 liquidation_percentage = 0.30          # 30% des Portfolios muss liquidiert werden
 crisis_duration_months = 6             # Krise dauert 6 Monate
 
-num_sim = 50000     # Anzahl Simulationen (reduziert für Test)
+num_sim = 100000     # Anzahl Simulationen (reduziert für Test)
 jahre = 26         # Anlagehorizont in Jahren
 startwert = 12000    # Startkurs in Euro
 monatliche_sparrate = 500  # Monatliche Sparrate in Euro
@@ -383,7 +383,7 @@ def heston_portfolio_extended_simulation(S0, v0, mu_base, kappa, theta, sigma_v,
     (hyperinflation_events, structural_crisis_events, 
      tax_shock_events, personal_crisis_events, event_counts) = simulate_black_swan_events(T, steps, num_sim)
     
-    print(f"🦢 Black Swan Events simuliert:")
+    print(f"🦢 Black Swan Events simuliert (Realistische OECD-Wahrscheinlichkeiten):")
     print(f"   Hyperinflation-Perioden: {event_counts['hyperinflation']} von {num_sim} Simulationen")
     print(f"   Strukturkrisen: {event_counts['structural_crisis']} von {num_sim}")
     print(f"   Steuer-Schocks: {event_counts['tax_shock']} von {num_sim}")
