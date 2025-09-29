@@ -101,7 +101,7 @@ liquidation_percentage = 0.30          # 30% des Portfolios muss liquidiert werd
 crisis_duration_months = 6             # Krise dauert 6 Monate
 
 num_sim = 10000     # Anzahl Simulationen (reduziert für Test)
-jahre = 26         # Anlagehorizont in Jahren
+jahre = 33         # Anlagehorizont in Jahren
 startwert = 12000    # Startkurs in Euro
 monatliche_sparrate = 500  # Monatliche Sparrate in Euro
 
@@ -794,20 +794,29 @@ def show_main_view():
     ax4 = plt.subplot(2, 2, 4)
     ax4.axis('off')
 
-    # Kompakte Kennzahlen-Tabelle
+    # Vollständige Kennzahlen-Tabelle mit allen Konsolen-Ausgaben
     summary_data = [
         ["Kennzahl", "Wert"],
+        ["ETF-Allokation", f"{etf1_weight:.0%}/{etf2_weight:.0%}/{etf3_weight:.0%}"],
         ["Monatliche Sparrate", f"{monatliche_sparrate:,.0f} €"],
         ["Anlagehorizont", f"{jahre} Jahre"],
+        ["Gesamteinzahlungen (nominal)", f"{gesamteinzahlungen_nominal:,.0f} €"],
         ["Gesamteinzahlungen (real)", f"{gesamteinzahlungen_real:,.0f} €"],
         ["Ø Endwert (real)", f"{endwerte.mean():,.0f} €"],
+        ["Ø Endwert (nominal)", f"{endwerte_nominal.mean():,.0f} €"],
         ["Ø Gewinn (real)", f"{gewinn_verlust_real.mean():,.0f} €"],
         ["Median Endwert (real)", f"{np.median(endwerte):,.0f} €"],
-        ["95% VaR Endwert", f"{var95_T:,.0f} €"],
+        ["67% Konfidenzintervall", f"{conf67_lower_T:,.0f} € - {conf67_upper_T:,.0f} €"],
+        ["75% VaR", f"{var75_T:,.0f} €"],
+        ["95% VaR", f"{var95_T:,.0f} €"],
+        ["99% VaR", f"{var99_T:,.0f} €"],
         ["Ø Inflation p.a.", f"{avg_inflation:.2%}"],
         ["Ø Zinssatz p.a.", f"{zinssatz_pfade.mean():.2%}"],
-        ["Gesamtkosten (Ø)", f"{kosten_pfade[:, -1].mean():,.0f} €"],
-        ["Kostenquote", f"{(kosten_pfade[:, -1].mean() / endwerte_nominal.mean()) * 100:.1f}%"]
+        ["ETF-Kosten (TER)", f"{ter_pfade[:, -1].mean():,.0f} €"],
+        ["Steuern (Dividenden+Gewinne)", f"{steuer_pfade[:, -1].mean():,.0f} €"],
+        ["TER + Steuern", f"{(ter_pfade[:, -1] + steuer_pfade[:, -1]).mean():,.0f} €"],
+        ["Black Swan Zusatzkosten", f"{(kosten_pfade[:, -1] - ter_pfade[:, -1] - steuer_pfade[:, -1]).mean():,.0f} €"],
+        ["ETF-Kostenquote (TER) p.a.", f"{management_fee_rate:.1%}"]
     ]
 
     summary_table = ax4.table(cellText=summary_data, 
@@ -1053,18 +1062,30 @@ class MatplotlibNavigationViews:
         ax4 = self.fig.add_subplot(2, 2, 4)
         ax4.axis('off')
 
-        # Kompakte Kennzahlen-Tabelle mit Konfidenzintervallen
+        # Vollständige Kennzahlen-Tabelle mit allen Konsolen-Ausgaben
         summary_data = [
             ["Kennzahl", "Wert"],
+            ["ETF-Allokation", f"{etf1_weight:.0%}/{etf2_weight:.0%}/{etf3_weight:.0%}"],
             ["Monatliche Sparrate", f"{monatliche_sparrate:,.0f} €"],
             ["Anlagehorizont", f"{jahre} Jahre"],
+            ["Gesamteinzahlungen (nominal)", f"{gesamteinzahlungen_nominal:,.0f} €"],
             ["Gesamteinzahlungen (real)", f"{gesamteinzahlungen_real:,.0f} €"],
             ["Ø Endwert (real)", f"{endwerte.mean():,.0f} €"],
+            ["Ø Endwert (nominal)", f"{endwerte_nominal.mean():,.0f} €"],
+            ["Ø Gewinn (real)", f"{gewinn_verlust_real.mean():,.0f} €"],
+            ["Median Endwert (real)", f"{np.median(endwerte):,.0f} €"],
             ["67% Konfidenzbereich", f"{conf67_lower_T:,.0f} € - {conf67_upper_T:,.0f} €"],
             ["90% Konfidenzbereich", f"{conf90_lower_T:,.0f} € - {conf90_upper_T:,.0f} €"],
             ["95% Konfidenzbereich", f"{conf95_lower_T:,.0f} € - {conf95_upper_T:,.0f} €"],
+            ["75% VaR", f"{var75_T:,.0f} €"],
             ["95% VaR (Worst Case)", f"{var95_T:,.0f} €"],
-            ["Ø Gewinn (real)", f"{gewinn_verlust_real.mean():,.0f} €"]
+            ["99% VaR (Extremfall)", f"{var99_T:,.0f} €"],
+            ["Ø Inflation p.a.", f"{avg_inflation:.2%}"],
+            ["Ø Zinssatz p.a.", f"{zinssatz_pfade.mean():.2%}"],
+            ["ETF-Kosten (TER)", f"{ter_pfade[:, -1].mean():,.0f} €"],
+            ["Steuern (Div.+Gewinne)", f"{steuer_pfade[:, -1].mean():,.0f} €"],
+            ["TER + Steuern", f"{(ter_pfade[:, -1] + steuer_pfade[:, -1]).mean():,.0f} €"],
+            ["Black Swan Zusatzkosten", f"{(kosten_pfade[:, -1] - ter_pfade[:, -1] - steuer_pfade[:, -1]).mean():,.0f} €"]
         ]
 
         summary_table = ax4.table(cellText=summary_data, 
@@ -1143,6 +1164,24 @@ class MatplotlibNavigationViews:
         ax4 = self.fig.add_subplot(2, 2, 4)
         ax4.axis('off')
 
+        # Berechne Black Swan Statistiken
+        hyperinflation_affected = np.any(hyperinflation_events, axis=1).sum()
+        crisis_affected = np.any(structural_crisis_events, axis=1).sum() 
+        tax_shock_affected = np.any(tax_shock_events, axis=1).sum()
+        personal_crisis_affected = np.any(personal_crisis_events, axis=1).sum()
+        
+        # Vergleich mit/ohne Black Swan Events
+        no_events_mask = (~np.any(hyperinflation_events, axis=1) & 
+                          ~np.any(structural_crisis_events, axis=1) & 
+                          ~np.any(tax_shock_events, axis=1) & 
+                          ~np.any(personal_crisis_events, axis=1))
+        
+        if np.any(no_events_mask):
+            endwerte_no_events = endwerte[no_events_mask]
+            black_swan_impact = ((endwerte.mean() - endwerte_no_events.mean()) / endwerte_no_events.mean() * 100)
+        else:
+            black_swan_impact = 0
+
         risk_data = [
             ["Risikokennzahl", "1-Jahr", f"{jahre}-Jahre (€)"],
             ["Mittelwert", f"{renditen_1y.mean():.2%}", f"{endwerte.mean():,.0f}"],
@@ -1152,7 +1191,14 @@ class MatplotlibNavigationViews:
             ["95% VaR (Worst Case)", f"{var95_1y:.2%}", f"{var95_T:,.0f}"],
             ["99% VaR (Extremfall)", f"{var99_1y:.2%}", f"{var99_T:,.0f}"],
             ["Expected Shortfall", f"{es95_1y:.2%}", f"{endwerte[endwerte <= var95_T].mean():,.0f}"],
-            ["Verlustwahrscheinlichkeit", f"{(renditen_1y < 0).mean():.1%}", f"{(gewinn_verlust_real < 0).mean():.1%}"]
+            ["Verlustwahrscheinlichkeit", f"{(renditen_1y < 0).mean():.1%}", f"{(gewinn_verlust_real < 0).mean():.1%}"],
+            ["", "", ""],  # Leerzeile
+            ["BLACK SWAN EVENTS", "Häufigkeit", "Impact"],
+            ["Hyperinflation betroffen", f"{hyperinflation_affected:,}", f"{hyperinflation_affected/num_sim:.1%}"],
+            ["Strukturkrise betroffen", f"{crisis_affected:,}", f"{crisis_affected/num_sim:.1%}"],
+            ["Steuer-Schock betroffen", f"{tax_shock_affected:,}", f"{tax_shock_affected/num_sim:.1%}"],
+            ["Pers. Krise betroffen", f"{personal_crisis_affected:,}", f"{personal_crisis_affected/num_sim:.1%}"],
+            ["Black Swan Impact", f"{black_swan_impact:+.1f}%", "auf Ø Endwert"]
         ]
 
         risk_table = ax4.table(cellText=risk_data, 
@@ -1161,8 +1207,8 @@ class MatplotlibNavigationViews:
                               colWidths=[0.4, 0.3, 0.3])
 
         risk_table.auto_set_font_size(False)
-        risk_table.set_fontsize(11)
-        risk_table.scale(1, 1.6)
+        risk_table.set_fontsize(10)
+        risk_table.scale(1, 1.4)
 
         # Header formatieren
         for i in range(len(risk_data[0])):
@@ -1177,33 +1223,50 @@ class MatplotlibNavigationViews:
 
         # Tooltips für Detailtabelle
         self.add_table_tooltips(ax4, risk_table, self.get_detail_tooltips())
-        ax4.set_title("Risikokennzahlen (Hover für Details)", fontsize=14, fontweight='bold', pad=20)
-    
+        ax4.set_title("Risikokennzahlen mit Black Swan Events (Hover für Details)", fontsize=13, fontweight='bold', pad=20)
+
     def get_main_tooltips(self):
         """Tooltip-Definitionen für die Haupttabelle (3-ETF Portfolio)"""
         return {
-            1: "Monatlich investierter Betrag in das 3-ETF Portfolio",
-            2: "Gesamter Anlagezeitraum für die ETF-Simulation", 
-            3: "Inflationsbereinigte Summe aller ETF-Einzahlungen über die Laufzeit",
-            4: "Durchschnittlicher Endwert des ETF-Portfolios nach Inflation und TER-Kosten",
-            5: "Wahrscheinlichkeitsbereich: Mit 67% Wahrscheinlichkeit liegt der ETF-Endwert in diesem Bereich (±1 Standardabweichung)",
-            6: "Wahrscheinlichkeitsbereich: Mit 90% Wahrscheinlichkeit liegt der ETF-Endwert in diesem Bereich", 
-            7: "Wahrscheinlichkeitsbereich: Mit 95% Wahrscheinlichkeit liegt der ETF-Endwert in diesem Bereich",
-            8: "Worst-Case-Szenario: In 5% der Fälle liegt der ETF-Endwert unter diesem Wert",
-            9: "Durchschnittlicher Gewinn nach Abzug aller Einzahlungen, ETF-Kosten und Inflation"
+            1: "Gewichtung der 3 ETFs: World Aktien/Emerging Markets/Anleihen mit jährlichem Rebalancing",
+            2: "Monatlich investierter Betrag in das 3-ETF Portfolio",
+            3: "Gesamter Anlagezeitraum für die ETF-Simulation mit Heston-Modell und Black Swan Events", 
+            4: "Nominale Summe aller Einzahlungen ohne Inflationsbereinigung (Startwert + 26 Jahre × 12 × 500€)",
+            5: "Inflationsbereinigte Summe aller ETF-Einzahlungen (reale Kaufkraft)",
+            6: "Durchschnittlicher realer Endwert nach Inflation, allen Kosten und Black Swan Events",
+            7: "Durchschnittlicher nominaler Endwert ohne Inflationsbereinigung",
+            8: "Durchschnittlicher realer Gewinn nach Abzug aller Kosten, Steuern und Inflation",
+            9: "Median (50%-Quantil) des realen Endwerts - robuster gegen Extremwerte",
+            10: "Konfidenzbereich: Mit 67% Wahrscheinlichkeit liegt der Endwert in diesem Bereich (±1σ)",
+            11: "Konfidenzbereich: Mit 90% Wahrscheinlichkeit liegt der Endwert in diesem Bereich",
+            12: "Konfidenzbereich: Mit 95% Wahrscheinlichkeit liegt der Endwert in diesem Bereich",
+            13: "Value at Risk: In 25% der Fälle liegt der Endwert unter diesem Wert",
+            14: "Value at Risk: In 5% der Fälle liegt der Endwert unter diesem Wert (Risikoszenario)",
+            15: "Value at Risk: In 1% der Fälle liegt der Endwert unter diesem Wert (Extremszenario)",
+            16: "Durchschnittliche jährliche Inflationsrate über die gesamte Simulationsperiode",
+            17: "Durchschnittlicher risikofreier Zinssatz (Vasicek-Modell mit stochastischen Zinsen)",
+            18: "Total Expense Ratio: Reine ETF-Managementgebühren (0.2% p.a. auf Portfolio-Wert)",
+            19: "Abgeltungsteuer auf Dividenden (jährlich) und realisierte Gewinne (Rebalancing)",
+            20: "Summe aus ETF-Kosten und Steuern - die 'normalen' Anlagekosten",
+            21: "Zusätzliche Kosten durch Black Swan Events: Liquidationsstrafen bei persönlichen Krisen"
         }
     
     def get_detail_tooltips(self):
         """Tooltip-Definitionen für die Detailtabelle"""
         return {
-            1: "Durchschnittliche erwartete Rendite pro Jahr",
-            2: "Maß für die Schwankungsbreite der Renditen (Risiko)",
-            3: "Konfidenzintervall: Bereich, in dem die Werte mit 67%iger Wahrscheinlichkeit liegen",
+            1: "Durchschnittliche erwartete reale Rendite pro Jahr (nach Inflation)",
+            2: "Maß für die Schwankungsbreite der Renditen (Volatilität/Risiko)",
+            3: "Konfidenzintervall: Bereich, in dem die Werte mit 67%iger Wahrscheinlichkeit liegen (±1σ)",
             4: "Konfidenzintervall: Bereich, in dem die Werte mit 90%iger Wahrscheinlichkeit liegen", 
-            5: "Value at Risk: In 5% der Fälle ist das Ergebnis schlechter als dieser Wert",
-            6: "Value at Risk: In 1% der Fälle ist das Ergebnis schlechter als dieser Wert (Extremfall)",
+            5: "Value at Risk: In 5% der Fälle ist das Ergebnis schlechter als dieser Wert (Risikoszenario)",
+            6: "Value at Risk: In 1% der Fälle ist das Ergebnis schlechter als dieser Wert (Extremszenario)",
             7: "Expected Shortfall: Durchschnittlicher Verlust in den schlechtesten 5% der Fälle",
-            8: "Wahrscheinlichkeit eines Verlusts (Endwert kleiner als Einzahlungen)"
+            8: "Wahrscheinlichkeit eines Verlusts (realer Endwert kleiner als reale Einzahlungen)",
+            11: "Anzahl Simulationen mit Hyperinflations-Perioden (12% Inflation über 3 Jahre)",
+            12: "Anzahl Simulationen mit Strukturkrisen (50% Markt-Drawdown über 2 Jahre)", 
+            13: "Anzahl Simulationen mit Steuer-Schocks (45% Kapitalertragssteuer + 1% Vermögenssteuer)",
+            14: "Anzahl Simulationen mit persönlichen Liquidationskrisen (30% Notverkauf)",
+            15: "Durchschnittlicher negativer Einfluss aller Black Swan Events auf den Endwert"
         }
     
     def add_table_tooltips(self, ax, table, tooltips_dict):
