@@ -102,7 +102,7 @@ personal_crisis_prob_per_year = 0.015  # 1.5% Chance pro Jahr (→ ~35% über 30
 liquidation_percentage = 0.30          # 30% des Portfolios muss liquidiert werden
 crisis_duration_months = 6             # Krise dauert 6 Monate
 
-num_sim = 100000     # Anzahl Simulationen (reduziert für Test)
+num_sim = 50000     # Anzahl Simulationen (reduziert für Test)
 jahre = 26         # Anlagehorizont in Jahren
 startwert = 12000    # Startkurs in Euro
 monatliche_sparrate = 500  # Monatliche Sparrate in Euro
