@@ -19,16 +19,18 @@ Diese Simulation modelliert die Entwicklung eines 3-ETF-Portfolios über 26 Jahr
 - **Merton Jump-Diffusion**: Seltene, große Marktbewegungen (~1 Crash alle 9 Jahre)
 - **Regime-Switching**: Markov-Ketten für Bull (60%), Normal (30%), Bear (10%) Markets
 - **Fat-Tail Distributions**: t-Verteilung für realistische Extremereignisse
-
-### ⚡ Performance-Optimierung
-- **Multithreading**: 4x-8x Speedup durch Parallelisierung
-- **Batch-Processing**: Memory-effiziente Verarbeitung großer Simulationen
-- **50.000 Simulationen** in wenigen Minuten statt Stunden
+- **Black Swan Events**: Hyperinflation, Strukturkrisen, Steuer-Schocks, persönliche Krisen
 
 ### 📈 Interaktive Visualisierung
-- **4 verschiedene Views** mit Navigation
-- **Hauptergebnisse, Detailanalysen, Performance, Kosten**
-- **Pfeiltasten-Navigation** durch matplotlib
+- **3 verschiedene Views** mit Navigation
+- **Hauptergebnisse, Detailanalysen, Kosten & Black Swan**
+- **Pfeiltasten-Navigation** durch matplotlib (Windows-optimiert)
+- **Hover-Tooltips** für detaillierte Tabellenerklärungen
+
+### ⚡ Performance-Hinweise
+- **50.000 Simulationen** (Laufzeit: 5-15 Minuten je nach Hardware)
+- **Memory-effiziente Verarbeitung** großer Arrays
+- **Reproduzierbare Ergebnisse** durch Seed-Kontrolle
 
 ## 🎯 Modell-Parameter
 
@@ -171,19 +173,20 @@ thesaurierend_etf_factor = 0.7   # 70% thesaurierende ETFs (steueroptimiert)
 num_sim = 50000     # 50.000 Simulationen für robuste Statistiken
 steps = 312         # Monatliche Zeitschritte (26 Jahre × 12 Monate)
 df_shocks = 6       # t-Verteilung mit 6 Freiheitsgraden (fat tails)
+np.random.seed(42)  # Reproduzierbare Ergebnisse
 ```
 
-### ⚡ Multithreading-Optimierung
+### 🎮 Interaktive Navigation
 
 ```python
-# Automatische Worker-Optimierung
-num_workers = min(cpu_count(), 8)  # Max 8 Kerne (Memory-begrenzt)
-batch_size = num_sim // num_workers # ~6.250 Simulationen pro Kern
+# Navigation zwischen 3 Views
+current_view = 0  # 0=Hauptergebnisse, 1=Detailanalysen, 2=Kosten & Black Swan
 
-# Performance-Verbesserungen:
-# - 4x-8x Speedup durch Parallelisierung  
-# - Memory-effizientes Batch-Processing
-# - Thread-safe Random Number Generation
+# Matplotlib-Integration:
+# - Native Pfeiltasten-Steuerung (← → ↑ ↓)
+# - Mausklick-Navigation (unten links/rechts)
+# - Hover-Tooltips für Tabellenerklärungen
+# - ESC zum Beenden
 ```
 
 ## 📈 Erwartete Ergebnisse
@@ -202,36 +205,38 @@ Durchschnittlicher Endwert: ~280.000€
 - **Sharpe Ratio**: ~0.45 (nach Kosten und Steuern)
 - **Maximum Drawdown**: ~65% (bei Bear Market + Black Swan)
 - **Verlustwahrscheinlichkeit**: ~15% (realer Verlust nach 26 Jahren)
+- **Simulationsdauer**: 5-15 Minuten (abhängig von Hardware)
 
 ## 🛠️ Installation & Verwendung
 
 ### Voraussetzungen
 
 ```bash
-pip install numpy matplotlib scipy concurrent.futures multiprocessing
+pip install numpy matplotlib
 ```
 
 ### Schnellstart
 
 ```python
-# Einfache Ausführung
+# Monte-Carlo-Simulation ausführen
 python MonteCarlo.py
 
-# Multithreaded Version  
-python MonteCarlo_Multithreaded.py
-
 # Auswahl im interaktiven Menü:
-# [1] Performance Demo
-# [2] Vollständige Simulation + Views  
-# [3] Threading-Empfehlungen
+# [1] Hauptergebnisse (statisch)
+# [2] Detailanalysen (statisch)  
+# [3] Kosten & Black Swan (statisch)
+# [4] Interaktive Navigation (alle 3 Views)
 ```
 
 ### Navigation in den Views
 
-- **← → ↑ ↓** Pfeiltasten: Views wechseln
+- **← → ↑ ↓** Pfeiltasten: Views wechseln (Windows-optimiert)
 - **N / Space**: Nächste View
 - **P / Backspace**: Vorherige View  
+- **Mausklick**: Navigation im unteren Bereich
 - **ESC**: Beenden
+
+**Hinweis**: Navigation verwendet `msvcrt` für Windows-Tastatureingaben
 
 ## 📚 Wissenschaftliche Grundlagen
 
@@ -261,11 +266,12 @@ python MonteCarlo_Multithreaded.py
 ## 🤝 Beiträge & Erweiterungen
 
 Mögliche Verbesserungen:
+- **Multithreading-Implementation** für bessere Performance
 - **Weitere Asset-Klassen** (Commodities, Crypto, REITs)
 - **Dynamische Asset Allocation** (Risk Parity, Momentum)
 - **ESG-Faktoren** und Climate Risk  
 - **Behavioral Finance** (Momentum, Herding)
-- **GPU-Beschleunigung** für noch größere Simulationen
+- **Web-Interface** für bessere Benutzerfreundlichkeit
 
 ## 📄 Lizenz
 
